@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(curl -s -o /dev/null -w \"board page: %{http_code}\\\\n\" http://localhost:3001/)",
+      "Bash(curl -s -w \"\\\\napi: %{http_code}\\\\n\" http://localhost:3001/api/tickets)",
+      "Bash(npx tsx *)",
+      "Bash(npx jest *)",
+      "Bash(curl -s -X PATCH http://localhost:3001/api/tickets/reorder -H 'content-type: application/json' -d '{\"ticketId\":1,\"status\":\"BACKLOG\",\"position\":2048}' -w \" [%{http_code}]\\\\n\")",
+      "Bash(curl -s -X DELETE http://localhost:3001/api/tickets/13 -w \"delete13:[%{http_code}]\\\\n\")"
+    ]
+  }
+}
