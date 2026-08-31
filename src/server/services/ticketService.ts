@@ -8,6 +8,7 @@ import {
 } from '@/shared/constants';
 import { createEmptyBoard } from '@/shared/board';
 import { needsRebalance, rebalance } from '@/shared/position';
+import { STAGE_ORDER_MESSAGE, canTransition } from '@/shared/transition';
 import type { BoardData, Ticket, TicketView } from '@/shared/types';
 import { todayString } from '@/shared/validations/ticket';
 import type {
@@ -22,6 +23,19 @@ export class NotFoundError extends Error {
   constructor(message = '티켓을 찾을 수 없습니다') {
     super(message);
     this.name = 'NotFoundError';
+  }
+}
+
+/**
+ * 단계를 건너뛴 칼럼 이동. (FR-007)
+ * 400으로 변환되며, 이 예외가 던져지면 티켓은 어떤 필드도 변경되지 않는다.
+ */
+export class InvalidTransitionError extends Error {
+  readonly code = ERROR_CODE.INVALID_TRANSITION;
+
+  constructor(message = STAGE_ORDER_MESSAGE) {
+    super(message);
+    this.name = 'InvalidTransitionError';
   }
 }
 
@@ -118,6 +132,9 @@ export const ticketService = {
     const existing = await ticketRepository.findById(id);
     if (!existing) throw new NotFoundError();
 
+    // 단축 경로로 단계를 건너뛸 수 있으면 reorder의 제약이 무력화된다. (FR-007)
+    if (!canTransition(existing.status, TICKET_STATUS.DONE)) throw new InvalidTransitionError();
+
     const minPosition = await ticketRepository.minPosition(TICKET_STATUS.DONE);
     const now = new Date().toISOString();
     const alreadyDone = existing.status === TICKET_STATUS.DONE;
@@ -137,6 +154,9 @@ export const ticketService = {
     const { ticketId, status, position } = payload;
     const existing = await ticketRepository.findById(ticketId);
     if (!existing) throw new NotFoundError();
+
+    // 어떤 쓰기보다 먼저 검사한다. 거부 시 상태도 position도 바뀌면 안 된다. (FR-007)
+    if (!canTransition(existing.status, status)) throw new InvalidTransitionError();
 
     const now = new Date().toISOString();
     const values: TicketWriteValues = { status, position, updatedAt: now };

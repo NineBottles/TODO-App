@@ -39,6 +39,12 @@ const initialBoard = (): BoardData => ({
   DONE: [],
 });
 
+/** IN_PROGRESS에 티켓 3번이 있는 보드. DONE 진입은 IN_PROGRESS에서만 가능하다 (FR-007) */
+const boardWithInProgress = (): BoardData => ({
+  ...initialBoard(),
+  IN_PROGRESS: [makeTicket(3, TICKET_STATUS.IN_PROGRESS, 0)],
+});
+
 describe('useTickets (FR-007, NFR-004)', () => {
   it('BACKLOG → TODO 이동 시 낙관적으로 보드를 갱신하고 reorder API를 호출한다', async () => {
     api.reorderTicket.mockResolvedValue([]);
@@ -57,17 +63,18 @@ describe('useTickets (FR-007, NFR-004)', () => {
     });
   });
 
-  it('DONE으로 이동하면 complete API를 호출한다 (FR-005)', async () => {
-    api.completeTicket.mockResolvedValue(makeTicket(2, TICKET_STATUS.DONE, 0));
-    api.fetchBoard.mockResolvedValue(initialBoard());
+  it('TC-INT-002: IN_PROGRESS → DONE 이동은 complete API를 호출한다 (FR-005)', async () => {
+    const board = boardWithInProgress();
+    api.completeTicket.mockResolvedValue(makeTicket(3, TICKET_STATUS.DONE, 0));
+    api.fetchBoard.mockResolvedValue(board);
 
-    const { result } = renderHook(() => useTickets(initialBoard()));
+    const { result } = renderHook(() => useTickets(board));
 
     await act(async () => {
-      await result.current.moveTicket(2, TICKET_STATUS.DONE, 0);
+      await result.current.moveTicket(3, TICKET_STATUS.DONE, 0);
     });
 
-    expect(api.completeTicket).toHaveBeenCalledWith(2);
+    expect(api.completeTicket).toHaveBeenCalledWith(3);
     expect(api.reorderTicket).not.toHaveBeenCalled();
   });
 
@@ -107,17 +114,18 @@ describe('useTickets (FR-007, NFR-004)', () => {
     );
   });
 
-  it('DONE이 아니던 티켓을 Done으로 옮길 때만 complete를 쓴다', async () => {
-    api.completeTicket.mockResolvedValue(makeTicket(2, TICKET_STATUS.DONE, 0));
-    api.fetchBoard.mockResolvedValue(initialBoard());
+  it('TC-INT-006: DONE이 아니던 티켓을 Done으로 옮길 때만 complete를 쓴다', async () => {
+    const board = boardWithInProgress();
+    api.completeTicket.mockResolvedValue(makeTicket(3, TICKET_STATUS.DONE, 0));
+    api.fetchBoard.mockResolvedValue(board);
 
-    const { result } = renderHook(() => useTickets(initialBoard()));
+    const { result } = renderHook(() => useTickets(board));
 
     await act(async () => {
-      await result.current.moveTicket(2, TICKET_STATUS.DONE, 0);
+      await result.current.moveTicket(3, TICKET_STATUS.DONE, 0);
     });
 
-    expect(api.completeTicket).toHaveBeenCalledWith(2);
+    expect(api.completeTicket).toHaveBeenCalledWith(3);
   });
 
   it('API 실패 시 이전 상태로 롤백하고 에러를 노출한다', async () => {
@@ -171,5 +179,54 @@ describe('useTickets (FR-007, NFR-004)', () => {
     });
 
     expect(result.current.board.TODO[0].title).toBe('수정됨');
+  });
+});
+
+describe('useTickets 단계 전이 차단 (FR-007)', () => {
+  it('TC-INT-007: TODO 티켓을 DONE으로 옮기면 차단하고 보드를 그대로 둔다', async () => {
+    const { result } = renderHook(() => useTickets(initialBoard()));
+
+    let outcome;
+    await act(async () => {
+      outcome = await result.current.moveTicket(2, TICKET_STATUS.DONE, 0);
+    });
+
+    expect(outcome).toEqual({ blocked: true, message: '단계별로 일감을 관리해 주세요' });
+    expect(api.completeTicket).not.toHaveBeenCalled();
+    expect(api.reorderTicket).not.toHaveBeenCalled();
+    // 낙관적 업데이트조차 하지 않는다 — 그 자리에서 변동 없음
+    expect(result.current.board.TODO.map((t) => t.id)).toEqual([2]);
+    expect(result.current.board.DONE).toEqual([]);
+  });
+
+  it('TC-INT-008: BACKLOG 티켓을 IN_PROGRESS로 옮겨도 차단한다', async () => {
+    const { result } = renderHook(() => useTickets(initialBoard()));
+
+    let outcome;
+    await act(async () => {
+      outcome = await result.current.moveTicket(1, TICKET_STATUS.IN_PROGRESS, 0);
+    });
+
+    expect(outcome).toEqual({ blocked: true, message: '단계별로 일감을 관리해 주세요' });
+    expect(api.reorderTicket).not.toHaveBeenCalled();
+    expect(result.current.board.BACKLOG.map((t) => t.id)).toEqual([1]);
+    expect(result.current.board.IN_PROGRESS).toEqual([]);
+  });
+
+  it('TC-INT-009: 역방향(DONE → BACKLOG)은 차단하지 않는다', async () => {
+    const board = initialBoard();
+    board.DONE = [{ ...makeTicket(7, TICKET_STATUS.DONE, 0), completedAt: '2026-01-01T00:00:00.000Z' }];
+    api.reorderTicket.mockResolvedValue([]);
+    api.fetchBoard.mockResolvedValue(board);
+
+    const { result } = renderHook(() => useTickets(board));
+
+    await act(async () => {
+      await result.current.moveTicket(7, TICKET_STATUS.BACKLOG, 0);
+    });
+
+    expect(api.reorderTicket).toHaveBeenCalledWith(
+      expect.objectContaining({ ticketId: 7, status: TICKET_STATUS.BACKLOG }),
+    );
   });
 });

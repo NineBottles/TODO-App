@@ -68,6 +68,7 @@ app/layout.tsx                     (RootLayout, 서버)
 | `selectedTicket` | `TicketView \| null` | 상세 모달에 표시할 티켓 |
 | `isCreateOpen` | `boolean` | 생성 모달 열림 여부 |
 | `createError` | `string \| null` | 생성 실패 메시지 |
+| `blockedMessage` | `string \| null` | 단계 전이 거부 알림 팝업 메시지. `null`이면 닫힘 (FR-007) |
 
 **레이아웃 (와이어프레임 대응)**
 
@@ -320,6 +321,20 @@ LOW 회색 / MEDIUM 파랑 / HIGH 빨강, `aria-label="우선순위 {라벨}"` (
 
 `Modal` 위에 구성한 확인 다이얼로그.
 
+### 8.5 AlertDialog
+
+| Prop | 타입 | 기본값 |
+|------|------|--------|
+| `isOpen` | `boolean` | — |
+| `title` | `string` | — |
+| `message` | `string` | — |
+| `confirmLabel` | `string` | `'확인'` |
+| `onClose` | `() => void` | — |
+
+`Modal` 위에 구성한 **알림 전용** 다이얼로그. 선택지 없이 확인 버튼 하나만 둔다.
+`ConfirmDialog`와 달리 사용자에게 결정을 묻지 않고 이미 거부된 동작을 알리기만 한다.
+단계를 건너뛴 드래그앤드롭을 막을 때 사용한다 (FR-007).
+
 ---
 
 ## 9. useTickets — `src/client/hooks/useTickets.ts`
@@ -339,11 +354,14 @@ LOW 회색 / MEDIUM 파랑 / HIGH 빨강, `aria-label="우선순위 {라벨}"` (
 | `createTicket` | `(input) => Promise<Ticket>` | 생성 후 BACKLOG 맨 위에 추가 |
 | `updateTicket` | `(id, payload) => Promise<Ticket>` | 수정 결과를 보드에 반영 |
 | `deleteTicket` | `(id) => Promise<void>` | 모든 칼럼에서 제거 |
-| `moveTicket` | `(id, toStatus, targetIndex) => Promise<void>` | 드래그앤드롭 이동 |
+| `moveTicket` | `(id, toStatus, targetIndex) => Promise<MoveResult>` | 드래그앤드롭 이동. 단계 전이 위반 시 `{ blocked: true, message }`를 반환하고 보드를 건드리지 않는다 |
 
 **`moveTicket` 흐름** (FR-007, NFR-004)
 
 ```
+0. 전이 검사: canTransition(현재 status, toStatus)가 false면
+   낙관적 업데이트도 API 호출도 하지 않고 즉시 중단한다.
+   보드는 그대로 두고 STAGE_ORDER_MESSAGE를 반환값으로 알린다. (FR-007)
 1. 현재 board를 snapshot으로 보관
 2. 낙관적 업데이트: 모든 칼럼에서 제거 → 대상 칼럼 targetIndex에 삽입
    - position = calculatePosition(대상 칼럼, targetIndex)

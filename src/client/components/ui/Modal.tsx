@@ -22,6 +22,16 @@ export const Modal = ({ isOpen, title, onClose, children }: ModalProps) => {
   const panelRef = useRef<HTMLDivElement>(null);
   const modalId = useId();
 
+  /**
+   * onClose는 호출부에서 인라인 화살표로 넘어오므로 렌더마다 새 함수다.
+   * 이것을 effect 의존성에 그대로 두면 모달이 열려 있는 동안 부모가 리렌더될 때마다
+   * cleanup이 돌아 포커스를 previouslyFocused로 되돌리고(입력 중 포커스 탈취),
+   * openModals 스택에서 빠졌다 다시 들어가 중첩 모달의 Escape 대상이 뒤바뀐다.
+   * 최신 참조만 ref로 들고, effect는 열림 여부에만 반응하게 한다. (NFR-003)
+   */
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -36,7 +46,7 @@ export const Modal = ({ isOpen, title, onClose, children }: ModalProps) => {
 
       if (event.key === 'Escape') {
         event.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
 
@@ -75,7 +85,7 @@ export const Modal = ({ isOpen, title, onClose, children }: ModalProps) => {
 
       previouslyFocused?.focus?.();
     };
-  }, [isOpen, modalId, onClose]);
+  }, [isOpen, modalId]);
 
   if (!isOpen) return null;
 

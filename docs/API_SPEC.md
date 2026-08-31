@@ -23,7 +23,7 @@
 | 200 OK | 조회, 수정, 완료, 순서 변경 성공 |
 | 201 Created | 티켓 생성 성공 |
 | 204 No Content | 티켓 삭제 성공 (본문 없음) |
-| 400 Bad Request | Zod 검증 실패, 잘못된 JSON 본문 |
+| 400 Bad Request | Zod 검증 실패, 잘못된 JSON 본문, 허용되지 않은 단계 전이 |
 | 404 Not Found | 존재하지 않는 티켓 ID |
 | 500 Internal Server Error | 서버/DB 오류 |
 
@@ -51,6 +51,7 @@
 |------|------|------|
 | `VALIDATION_ERROR` | 400 | 요청 값이 Zod 스키마를 통과하지 못함 |
 | `TICKET_NOT_FOUND` | 404 | 해당 ID의 티켓이 없음 (`message`: "티켓을 찾을 수 없습니다") |
+| `INVALID_TRANSITION` | 400 | 단계를 건너뛴 이동 (`message`: "단계별로 일감을 관리해 주세요"). 상태·position 모두 변경되지 않는다 |
 | `INTERNAL_ERROR` | 500 | 그 외 서버 오류 (`message`: "서버 오류가 발생했습니다"). **원본 예외는 서버 로그에 기록한다** — 응답에는 내부 정보를 담지 않되, 버리지도 않는다 |
 
 ### 1.4 Ticket 객체
@@ -217,8 +218,10 @@
 - **멱등**: 이미 `DONE`인 티켓에 다시 호출해도 기존 `completedAt`을 유지한다. 덮어쓰면 실제 완료 시각이 사라지고 24시간 노출 창이 리셋된다.
 - Done 칼럼 **안에서 순서만** 바꾸는 조작은 이 엔드포인트가 아니라 `PATCH /api/tickets/reorder`를 사용한다.
 - DONE에서 다른 칼럼으로 되돌리는 것도 `PATCH /api/tickets/reorder`가 담당하며, 그때 `completedAt`이 `null`로 초기화된다.
+- **단계 전이 제약을 동일하게 적용한다 (FR-007).** DONE의 직전 단계는 `IN_PROGRESS`이므로, `IN_PROGRESS`(또는 이미 `DONE`)인 티켓만 완료할 수 있다. `BACKLOG`/`TODO` 티켓에 호출하면 400 `INVALID_TRANSITION`으로 거부하며 티켓은 변경되지 않는다. 이 단축 경로로 단계를 건너뛸 수 있으면 제약이 무력화되기 때문이다.
 
 **응답 200**: 업데이트된 Ticket 전체
+**응답 400**: `INVALID_TRANSITION` — "단계별로 일감을 관리해 주세요" (BACKLOG/TODO 티켓에 호출)
 **응답 404**: `TICKET_NOT_FOUND`
 
 ---
@@ -279,10 +282,24 @@
 
 **응답 400**
 
-| 조건 | message |
-|------|---------|
-| `status`가 잘못된 값 | 상태는 BACKLOG, TODO, IN_PROGRESS, DONE 중 선택해주세요 |
-| `ticketId`/`position` 타입 오류 | Zod 기본 메시지 |
+| 조건 | code | message |
+|------|------|---------|
+| `status`가 잘못된 값 | `VALIDATION_ERROR` | 상태는 BACKLOG, TODO, IN_PROGRESS, DONE 중 선택해주세요 |
+| `ticketId`/`position` 타입 오류 | `VALIDATION_ERROR` | Zod 기본 메시지 |
+| 단계를 건너뛴 이동 | `INVALID_TRANSITION` | 단계별로 일감을 관리해 주세요 |
+
+**단계 전이 제약 (FR-007)**
+
+칼럼 순서는 `BACKLOG → TODO → IN_PROGRESS → DONE`이다. **순방향은 인접한 한 단계씩만** 허용하고, **역방향과 같은 칼럼 내 재정렬은 제한하지 않는다.**
+
+| from \ to | BACKLOG | TODO | IN_PROGRESS | DONE |
+|---|---|---|---|---|
+| **BACKLOG** | O | O | X | X |
+| **TODO** | O | O | O | X |
+| **IN_PROGRESS** | O | O | O | O |
+| **DONE** | O | O | O | O |
+
+거부 시 티켓은 **어떤 필드도 변경되지 않는다**(position 포함). 재정렬 트랜잭션 자체가 시작되지 않는다.
 
 **응답 404**: 존재하지 않는 `ticketId` → "티켓을 찾을 수 없습니다"
 

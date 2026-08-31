@@ -19,6 +19,7 @@ import { resolveDropTarget } from '@/client/components/board/resolveDropTarget';
 import { TicketCard } from '@/client/components/board/TicketCard';
 import { TicketForm, type TicketFormValues } from '@/client/components/ticket/TicketForm';
 import { TicketModal } from '@/client/components/ticket/TicketModal';
+import { AlertDialog } from '@/client/components/ui/AlertDialog';
 import { Button } from '@/client/components/ui/Button';
 import { Modal } from '@/client/components/ui/Modal';
 import { useTickets } from '@/client/hooks/useTickets';
@@ -45,6 +46,8 @@ export const Board = ({ initialBoard }: BoardProps) => {
   const [selectedTicket, setSelectedTicket] = useState<TicketView | null>(null);
   const [isCreateOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  /** 단계 전이 거부 알림. null이면 팝업이 닫혀 있다. (FR-007) */
+  const [blockedMessage, setBlockedMessage] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -88,7 +91,9 @@ export const Board = ({ initialBoard }: BoardProps) => {
     });
     if (targetIndex === null) return;
 
-    await moveTicket(ticketId, toStatus, targetIndex);
+    const outcome = await moveTicket(ticketId, toStatus, targetIndex);
+    // 차단된 경우 보드는 이미 변동 없이 유지된다. 알림만 띄운다. (FR-007)
+    if (outcome.blocked) setBlockedMessage(outcome.message);
   };
 
   const handleCreate = async (values: TicketFormValues) => {
@@ -178,6 +183,13 @@ export const Board = ({ initialBoard }: BoardProps) => {
         )}
         <TicketForm submitLabel="생성" onSubmit={handleCreate} onCancel={() => setCreateOpen(false)} />
       </Modal>
+
+      <AlertDialog
+        isOpen={blockedMessage !== null}
+        title="이동할 수 없습니다"
+        message={blockedMessage ?? ''}
+        onClose={() => setBlockedMessage(null)}
+      />
 
       <TicketModal
         ticket={selectedTicket}

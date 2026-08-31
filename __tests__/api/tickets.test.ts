@@ -14,8 +14,16 @@ jest.mock('@/server/services/ticketService', () => {
       this.name = 'NotFoundError';
     }
   }
+  class InvalidTransitionError extends Error {
+    readonly code = 'INVALID_TRANSITION';
+    constructor(message = '단계별로 일감을 관리해 주세요') {
+      super(message);
+      this.name = 'InvalidTransitionError';
+    }
+  }
   return {
     NotFoundError,
+    InvalidTransitionError,
     ticketService: {
       getBoard: jest.fn(),
       getById: jest.fn(),
@@ -28,7 +36,11 @@ jest.mock('@/server/services/ticketService', () => {
   };
 });
 
-import { NotFoundError, ticketService } from '@/server/services/ticketService';
+import {
+  InvalidTransitionError,
+  NotFoundError,
+  ticketService,
+} from '@/server/services/ticketService';
 import { GET as getBoard, POST as postTicket } from '../../app/api/tickets/route';
 import {
   DELETE as deleteTicket,
@@ -98,6 +110,23 @@ describe('POST /api/tickets (FR-001)', () => {
     expect(body.error.code).toBe('VALIDATION_ERROR');
     expect(body.error.message).toBe('제목을 입력해주세요');
   });
+
+  it('TC-API-001b: JSON으로 파싱할 수 없는 본문이면 400', async () => {
+    // jsonRequest는 JSON.stringify를 쓰므로 깨진 본문을 만들 수 없다. 직접 생성한다.
+    const response = await postTicket(
+      new Request('http://localhost/api/tickets', {
+        method: 'POST',
+        body: '{bad',
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'VALIDATION_ERROR', message: 'JSON 형식의 요청 본문이 필요합니다' },
+    });
+    expect(service.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('GET /api/tickets/:id (FR-003)', () => {
@@ -118,6 +147,16 @@ describe('GET /api/tickets/:id (FR-003)', () => {
     expect(response.status).toBe(404);
     const body = await response.json();
     expect(body.error).toEqual({ code: 'TICKET_NOT_FOUND', message: '티켓을 찾을 수 없습니다' });
+  });
+
+  it('TC-API-003b: id가 숫자가 아니면 400 (서비스까지 가지 않는다)', async () => {
+    const response = await getTicket(new Request('http://localhost'), params('abc'));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'VALIDATION_ERROR' },
+    });
+    expect(service.getById).not.toHaveBeenCalled();
   });
 });
 
@@ -168,6 +207,28 @@ describe('PATCH /api/tickets/:id/complete (FR-005)', () => {
     expect(response.status).toBe(200);
     expect(service.complete).toHaveBeenCalledWith(1);
   });
+
+  it('TC-API-005b: 단계를 건너뛴 완료는 400 INVALID_TRANSITION', async () => {
+    service.complete.mockRejectedValue(new InvalidTransitionError());
+
+    const response = await completeTicket(new Request('http://localhost'), params('1'));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'INVALID_TRANSITION', message: '단계별로 일감을 관리해 주세요' },
+    });
+  });
+
+  it('TC-API-005a: 존재하지 않으면 404', async () => {
+    service.complete.mockRejectedValue(new NotFoundError());
+
+    const response = await completeTicket(new Request('http://localhost'), params('999'));
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'TICKET_NOT_FOUND', message: '티켓을 찾을 수 없습니다' },
+    });
+  });
 });
 
 describe('PATCH /api/tickets/reorder (FR-007)', () => {
@@ -214,5 +275,30 @@ describe('PATCH /api/tickets/reorder (FR-007)', () => {
     );
 
     expect(response.status).toBe(404);
+  });
+
+  it('TC-API-007e: 단계를 건너뛴 이동은 400 INVALID_TRANSITION', async () => {
+    service.reorder.mockRejectedValue(new InvalidTransitionError());
+
+    const response = await reorderTicket(
+      jsonRequest({ ticketId: 1, status: TICKET_STATUS.DONE, position: 0 }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'INVALID_TRANSITION', message: '단계별로 일감을 관리해 주세요' },
+    });
+  });
+
+  it('TC-API-007c: position이 소수면 400 (position은 정수 컬럼)', async () => {
+    const response = await reorderTicket(
+      jsonRequest({ ticketId: 1, status: TICKET_STATUS.TODO, position: 0.5 }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'VALIDATION_ERROR' },
+    });
+    expect(service.reorder).not.toHaveBeenCalled();
   });
 });
