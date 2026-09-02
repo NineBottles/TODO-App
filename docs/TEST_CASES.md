@@ -111,7 +111,28 @@ npx jest __tests__/services   # 특정 디렉토리
 | TC-SVC-028 | 수정 스키마에 `{ description: null, dueDate: null }` | 통과 (null로 삭제 가능) |
 | TC-SVC-028a | 수정 스키마에 `{ dueDate: '2020-01-01' }` | **통과** — 오버듀 티켓도 수정 가능해야 하므로 미래 제약 없음 |
 | TC-SVC-028b | 수정 스키마에 `{ dueDate: '2020-13-99' }` | 실패 — 형식 검증은 유지 |
-| TC-SVC-029 | reorder 스키마에 `status: 'DONE'` | 실패 — "상태는 BACKLOG, TODO, IN_PROGRESS 중 선택해주세요" |
+| TC-SVC-029 | reorder 스키마에 `status: 'DONE'` | **통과** — Done 칼럼 내 재정렬에 필요하다 (API_SPEC 9장) |
+| TC-SVC-029a | reorder 스키마에 `status: 'ARCHIVED'` | 실패 — "상태는 BACKLOG, TODO, IN_PROGRESS, DONE 중 선택해주세요" |
+
+### 2.6a 단계 전이 규칙 (FR-007)
+
+**파일**: `__tests__/services/transition.test.ts` (`src/shared/transition.ts` 순수 함수)
+
+| ID | 입력 | 기대 결과 |
+|----|------|----------|
+| TC-SVC-036 | BACKLOG → TODO / TODO → IN_PROGRESS / IN_PROGRESS → DONE | 모두 `true` (인접 순방향) |
+| TC-SVC-037 | BACKLOG → IN_PROGRESS / BACKLOG → DONE / TODO → DONE | 모두 `false` (단계 건너뜀) |
+| TC-SVC-038 | DONE → BACKLOG / DONE → TODO / IN_PROGRESS → BACKLOG | 모두 `true` (역방향은 제한 없음) |
+| TC-SVC-039 | 같은 칼럼 (TODO → TODO, DONE → DONE) | 모두 `true` (칼럼 내 재정렬) |
+
+### 2.6b 서비스 계층 전이 강제 (FR-005, FR-007)
+
+| ID | 입력 | 기대 결과 |
+|----|------|----------|
+| TC-SVC-040 | TODO 티켓을 `reorder`로 DONE 이동 | `InvalidTransitionError`, 레포지토리 쓰기 호출 **없음** |
+| TC-SVC-041 | TODO 티켓에 `complete` 호출 | `InvalidTransitionError`, 레포지토리 쓰기 호출 **없음** |
+| TC-SVC-042 | IN_PROGRESS 티켓에 `complete` 호출 | 정상 완료 (200 경로) |
+| TC-SVC-043 | 이미 DONE인 티켓에 `complete` 호출 | 정상 (멱등, `completedAt` 유지) |
 
 ### 2.7 position 유틸 (FR-007)
 
@@ -136,17 +157,24 @@ npx jest __tests__/services   # 특정 디렉토리
 |----|------|--------|----------|-----|
 | TC-API-001 | `POST /api/tickets` | 유효한 제목으로 생성 | 201 + 생성된 티켓 본문 | FR-001 |
 | TC-API-001a | `POST /api/tickets` | `title: ''` | 400, `code: VALIDATION_ERROR`, `message: "제목을 입력해주세요"` | FR-001 |
+| TC-API-001b | `POST /api/tickets` | JSON으로 파싱 불가한 본문 | 400 — "JSON 형식의 요청 본문이 필요합니다" | FR-001 |
 | TC-API-002 | `GET /api/tickets` | 보드 조회 | 200 + 4개 칼럼 키를 가진 객체 | FR-002 |
 | TC-API-003 | `GET /api/tickets/:id` | 존재하는 ID | 200, 서비스에 숫자 `1`이 전달됨 | FR-003 |
 | TC-API-003a | `GET /api/tickets/:id` | 없는 ID | 404 + `{ code: 'TICKET_NOT_FOUND', message: '티켓을 찾을 수 없습니다' }` | FR-003 |
+| TC-API-003b | `GET /api/tickets/:id` | id가 숫자가 아님 (`abc`) | 400 — 서비스 계층까지 도달하지 않는다 | FR-003 |
 | TC-API-004 | `PATCH /api/tickets/:id` | `{ title: '수정됨' }` | 200, 서비스에 `(1, { title: '수정됨' })` 전달 | FR-004 |
 | TC-API-004a | `PATCH /api/tickets/:id` | 제목 201자 | 400 — "제목은 200자 이내로 입력해주세요" | FR-004 |
 | TC-API-005 | `PATCH /api/tickets/:id/complete` | 완료 처리 | 200, 서비스에 `1` 전달 | FR-005 |
+| TC-API-005a | `PATCH /api/tickets/:id/complete` | 없는 ID | 404 | FR-005 |
+| TC-API-005b | `PATCH /api/tickets/:id/complete` | TODO 티켓 완료 시도 | 400 `INVALID_TRANSITION` — "단계별로 일감을 관리해 주세요" | FR-005 |
 | TC-API-006 | `DELETE /api/tickets/:id` | 삭제 성공 | 204, 본문 없음 | FR-006 |
 | TC-API-006a | `DELETE /api/tickets/:id` | 없는 ID | 404 | FR-006 |
 | TC-API-007 | `PATCH /api/tickets/reorder` | 유효한 이동 | 200 + 갱신된 티켓 배열 | FR-007 |
-| TC-API-007a | `PATCH /api/tickets/reorder` | `status: 'DONE'` | 400 — "상태는 BACKLOG, TODO, IN_PROGRESS 중 선택해주세요" | FR-007 |
-| TC-API-007b | `PATCH /api/tickets/reorder` | 없는 `ticketId` | 404 | FR-007 |
+| TC-API-007a | `PATCH /api/tickets/reorder` | `status: 'DONE'` | **200** — Done 칼럼 내 재정렬용으로 허용 | FR-007 |
+| TC-API-007b | `PATCH /api/tickets/reorder` | `status: 'ARCHIVED'` | 400 — "상태는 BACKLOG, TODO, IN_PROGRESS, DONE 중 선택해주세요" | FR-007 |
+| TC-API-007c | `PATCH /api/tickets/reorder` | 없는 `ticketId` | 404 | FR-007 |
+| TC-API-007d | `PATCH /api/tickets/reorder` | `position: 0.5` | 400 — position은 정수 컬럼이라 소수를 거부한다 | FR-007 |
+| TC-API-007e | `PATCH /api/tickets/reorder` | 단계를 건너뛴 이동 | 400 `INVALID_TRANSITION` — "단계별로 일감을 관리해 주세요" | FR-007 |
 | TC-API-008 | `GET /api/tickets` | 오버듀 파생 필드 | `isOverdue` 계산은 서비스 계층에서 검증 (TC-SVC-005~007) | FR-008 |
 
 > TC-API-008은 Route Handler가 서비스 결과를 그대로 직렬화하는 얇은 계층이므로, 실제 판정 로직 검증은 TC-SVC-005~007이 담당한다.
@@ -218,6 +246,13 @@ npx jest __tests__/services   # 특정 디렉토리
 | TC-COMP-005 | 카드 클릭 | "티켓 상세" 모달이 열린다 | US-007 |
 | TC-COMP-010 | 두 번 렌더링 후 `aria-describedby` 비교 | 값이 동일하다 — `DndContext`에 고정 `id`가 없으면 SSR 하이드레이션이 깨진다 | NFR-005 |
 
+### 4.4a AlertDialog — `__tests__/components/Board.test.tsx`
+
+| ID | 케이스 | 기대 결과 | FR |
+|----|--------|----------|-----|
+| TC-COMP-009 | 단계를 건너뛴 이동이 차단됨 | "단계별로 일감을 관리해 주세요" 알림 팝업이 표시된다 | FR-007 |
+| TC-COMP-009a | 알림 팝업의 확인 클릭 | 팝업이 닫히고 보드는 그대로다 | FR-007 |
+
 ### 4.5 TicketForm — `__tests__/components/TicketForm.test.tsx`
 
 | ID | 케이스 | 기대 결과 | US |
@@ -251,14 +286,17 @@ npx jest __tests__/services   # 특정 디렉토리
 | ID | 케이스 | 기대 결과 | 관련 |
 |----|--------|----------|------|
 | TC-INT-001 | BACKLOG 티켓을 TODO 칼럼 인덱스 1로 이동 | `reorderTicket({ ticketId: 1, status: 'TODO', position: 1024 })` 호출 | FR-007, US-005 |
-| TC-INT-002 | TODO 티켓을 DONE으로 이동 | `completeTicket(2)` 호출, `reorderTicket`은 미호출 | FR-005, US-006 |
+| TC-INT-002 | **IN_PROGRESS** 티켓을 DONE으로 이동 | `completeTicket(2)` 호출, `reorderTicket`은 미호출 | FR-005, US-006 |
 | TC-INT-003 | 이동 API가 실패 | 보드가 이동 전 상태로 롤백되고 `error` 메시지가 설정된다 | NFR-004, US-005 |
 | TC-HOOK-001 | 티켓 생성 | 새 티켓이 BACKLOG **맨 위**에 추가된다 (`[9, 1]`) | FR-001, US-001 |
 | TC-HOOK-002 | 티켓 삭제 | 해당 티켓이 보드에서 사라진다 | FR-006, US-008 |
 | TC-HOOK-003 | 티켓 수정 | 수정된 제목이 보드에 반영된다 | FR-004, US-007 |
 | TC-INT-004 | 이동 API 성공 + `refresh` 실패 | **롤백하지 않는다.** 서버에 반영됐으므로 화면도 이동 상태 유지 | NFR-004 |
 | TC-INT-005 | 이미 DONE인 티켓을 Done 안에서 이동 | `reorderTicket` 호출, `completeTicket` **미호출** | FR-005 |
-| TC-INT-006 | DONE이 아니던 티켓을 Done으로 이동 | `completeTicket` 호출 | FR-005, US-006 |
+| TC-INT-006 | DONE이 아니던 **IN_PROGRESS** 티켓을 Done으로 이동 | `completeTicket` 호출 | FR-005, US-006 |
+| TC-INT-007 | TODO 티켓을 DONE으로 이동 시도 (단계 건너뜀) | `{ blocked: true, message: '단계별로 일감을 관리해 주세요' }` 반환. 보드 **불변**, `completeTicket`·`reorderTicket` 모두 **미호출** | FR-007 |
+| TC-INT-008 | BACKLOG 티켓을 IN_PROGRESS로 이동 시도 | TC-INT-007과 동일하게 차단 | FR-007 |
+| TC-INT-009 | DONE 티켓을 BACKLOG로 이동 (역방향) | 정상 이동 — `reorderTicket` 호출 | FR-007 |
 
 ---
 

@@ -20,7 +20,7 @@ jest.mock('@/server/db/ticketRepository', () => ({
 }));
 
 import { ticketRepository } from '@/server/db/ticketRepository';
-import { NotFoundError, ticketService } from '@/server/services/ticketService';
+import { InvalidTransitionError, NotFoundError, ticketService } from '@/server/services/ticketService';
 
 const repo = ticketRepository as jest.Mocked<typeof ticketRepository>;
 
@@ -332,5 +332,71 @@ describe('ticketService.reorder (FR-007)', () => {
       { id: 1, position: 1024 },
       { id: 3, position: 2048 },
     ]);
+  });
+});
+
+describe('ticketService 단계 전이 강제 (FR-007)', () => {
+  it('TC-SVC-040: TODO 티켓을 DONE으로 reorder하면 InvalidTransitionError', async () => {
+    repo.findById.mockResolvedValue(makeTicket({ id: 1, status: TICKET_STATUS.TODO }));
+
+    await expect(
+      ticketService.reorder({ ticketId: 1, status: TICKET_STATUS.DONE, position: 0 }),
+    ).rejects.toBeInstanceOf(InvalidTransitionError);
+
+    // 상태·position 모두 손대지 않아야 한다
+    expect(repo.applyReorder).not.toHaveBeenCalled();
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it('TC-SVC-040a: BACKLOG 티켓을 IN_PROGRESS로 reorder해도 거부한다', async () => {
+    repo.findById.mockResolvedValue(makeTicket({ id: 1, status: TICKET_STATUS.BACKLOG }));
+
+    await expect(
+      ticketService.reorder({ ticketId: 1, status: TICKET_STATUS.IN_PROGRESS, position: 0 }),
+    ).rejects.toBeInstanceOf(InvalidTransitionError);
+    expect(repo.applyReorder).not.toHaveBeenCalled();
+  });
+
+  it('TC-SVC-038 (서비스): 역방향 이동은 정상 처리한다', async () => {
+    const done = makeTicket({ id: 1, status: TICKET_STATUS.DONE, completedAt: '2026-01-02T00:00:00.000Z' });
+    repo.findById.mockResolvedValue(done);
+    repo.findByStatus.mockResolvedValue([]);
+    repo.applyReorder.mockImplementation(async (_id, values) => makeTicket(values as Partial<Ticket>));
+
+    await expect(
+      ticketService.reorder({ ticketId: 1, status: TICKET_STATUS.BACKLOG, position: 0 }),
+    ).resolves.toBeDefined();
+    expect(repo.applyReorder).toHaveBeenCalled();
+  });
+
+  it('TC-SVC-041: TODO 티켓에 complete를 호출하면 InvalidTransitionError', async () => {
+    repo.findById.mockResolvedValue(makeTicket({ id: 1, status: TICKET_STATUS.TODO }));
+
+    await expect(ticketService.complete(1)).rejects.toBeInstanceOf(InvalidTransitionError);
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it('TC-SVC-042: IN_PROGRESS 티켓은 complete로 완료할 수 있다', async () => {
+    repo.findById.mockResolvedValue(makeTicket({ id: 1, status: TICKET_STATUS.IN_PROGRESS }));
+    repo.minPosition.mockResolvedValue(null);
+    repo.update.mockImplementation(async (_id, values) => makeTicket(values as Partial<Ticket>));
+
+    const result = await ticketService.complete(1);
+
+    expect(result.status).toBe(TICKET_STATUS.DONE);
+    expect(repo.update).toHaveBeenCalled();
+  });
+
+  it('TC-SVC-043: 이미 DONE인 티켓의 complete는 멱등하게 통과한다', async () => {
+    repo.findById.mockResolvedValue(
+      makeTicket({ id: 1, status: TICKET_STATUS.DONE, completedAt: '2026-01-02T00:00:00.000Z' }),
+    );
+    repo.minPosition.mockResolvedValue(0);
+    repo.update.mockImplementation(async (_id, values) => makeTicket(values as Partial<Ticket>));
+
+    await ticketService.complete(1);
+
+    // completedAt을 덮어쓰지 않는다
+    expect(repo.update).toHaveBeenCalledWith(1, expect.not.objectContaining({ completedAt: expect.anything() }));
   });
 });

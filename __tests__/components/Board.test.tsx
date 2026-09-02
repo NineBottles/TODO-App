@@ -1,6 +1,8 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Board } from '@/client/components/board/Board';
+import { AlertDialog } from '@/client/components/ui/AlertDialog';
+import { STAGE_ORDER_MESSAGE } from '@/shared/transition';
 import { TICKET_PRIORITY, TICKET_STATUS } from '@/shared/constants';
 import type { BoardData, TicketView } from '@/shared/types';
 
@@ -96,5 +98,42 @@ describe('Board (US-003, US-001, US-007)', () => {
     await userEvent.click(screen.getByText('할 일 티켓'));
 
     expect(await screen.findByRole('dialog', { name: '티켓 상세' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * 단계 전이 거부 알림 (FR-007) — TC-COMP-009
+ *
+ * 드래그 좌표는 jsdom에서 재현되지 않으므로, Board가 띄우는 알림 팝업 자체를 직접 검증한다.
+ * "차단 판정 → moveTicket이 blocked를 반환" 부분은 TC-INT-007/008이 담당한다.
+ */
+describe('AlertDialog — 단계 전이 거부 알림 (FR-007)', () => {
+  it('TC-COMP-009: 차단 메시지를 팝업으로 표시한다', () => {
+    render(
+      <AlertDialog isOpen title="이동할 수 없습니다" message={STAGE_ORDER_MESSAGE} onClose={() => {}} />,
+    );
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('단계별로 일감을 관리해 주세요')).toBeInTheDocument();
+  });
+
+  it('TC-COMP-009a: 확인을 누르면 onClose가 호출된다', async () => {
+    const user = userEvent.setup();
+    const onClose = jest.fn();
+
+    render(
+      <AlertDialog isOpen title="이동할 수 없습니다" message={STAGE_ORDER_MESSAGE} onClose={onClose} />,
+    );
+    await user.click(screen.getByRole('button', { name: '확인' }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('isOpen이 false면 아무것도 렌더링하지 않는다', () => {
+    render(
+      <AlertDialog isOpen={false} title="이동할 수 없습니다" message={STAGE_ORDER_MESSAGE} onClose={() => {}} />,
+    );
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

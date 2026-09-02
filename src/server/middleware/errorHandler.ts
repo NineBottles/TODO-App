@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { logError } from '@/server/middleware/logger';
 import { ZodError } from 'zod';
-import { NotFoundError } from '@/server/services/ticketService';
+import { InvalidTransitionError, NotFoundError } from '@/server/services/ticketService';
 import { ERROR_CODE, type ErrorCode } from '@/shared/constants';
 import type { ApiError } from '@/shared/types';
 
@@ -31,6 +31,10 @@ export const handleError = (error: unknown, scope = 'api'): NextResponse<ApiErro
   if (error instanceof ZodError) return validationErrorResponse(error);
   if (error instanceof NotFoundError) {
     return errorResponse(ERROR_CODE.TICKET_NOT_FOUND, error.message, 404);
+  }
+  // 단계 건너뛰기는 사용자가 유발하는 예상된 흐름이므로 로깅하지 않는다. (FR-007)
+  if (error instanceof InvalidTransitionError) {
+    return errorResponse(ERROR_CODE.INVALID_TRANSITION, error.message, 400);
   }
 
   logError(scope, error);
